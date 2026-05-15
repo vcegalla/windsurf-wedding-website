@@ -1,0 +1,508 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Wedding Website Infrastructure - DynamoDB, Lambda, API Gateway, and S3
+
+Parameters:
+  WeddingPassword:
+    Type: String
+    Default: wedding2026
+    Description: Password for website authentication
+
+Resources:
+  # DynamoDB Table for RSVP data
+  RSVPTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: WeddingRSVP
+      AttributeDefinitions:
+        - AttributeName: rsvpId
+          AttributeType: S
+        - AttributeName: name
+          AttributeType: S
+      KeySchema:
+        - AttributeName: rsvpId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: NameIndex
+          KeySchema:
+            - AttributeName: name
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: WeddingLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt RSVPTable.Arn
+                  - !Sub ${RSVPTable.Arn}/index/*
+
+  # Lambda Function for password authentication
+  AuthLoginLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          WEDDING_PASSWORD: !Ref WeddingPassword
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            try {
+              const body = JSON.parse(event.body || '{}');
+              const { password, guestName } = body;
+
+              if (!password || !guestName) {
+                return {
+                  statusCode: 400,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                  },
+                  body: JSON.stringify({ error: 'Missing guestName or password' }),
+                };
+              }
+
+              const expectedPassword = process.env.WEDDING_PASSWORD;
+
+              if (!expectedPassword) {
+                return {
+                  statusCode: 500,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                  },
+                  body: JSON.stringify({ error: 'Auth service is not configured' }),
+                };
+              }
+
+              if (password !== expectedPassword) {
+                return {
+                  statusCode: 401,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                  },
+                  body: JSON.stringify({ error: 'Invalid password' }),
+                };
+              }
+
+              return {
+                statusCode: 200,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                },
+                body: JSON.stringify({
+                  authenticated: true,
+                  guestName: guestName.trim(),
+                }),
+              };
+            } catch (error) {
+              return {
+                statusCode: 500,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                },
+                body: JSON.stringify({ error: 'Internal server error' }),
+              };
+            }
+          };
+
+  # Lambda Function for RSVP submission
+  RSVPHandlerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: WeddingRSVPHandler
+      Runtime: nodejs18.x
+      Handler: rsvp-handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          RSVP_TABLE_NAME: !Ref RSVPTable
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamoDB = new AWS.DynamoDB.DocumentClient();
+          const TABLE_NAME = process.env.RSVP_TABLE_NAME;
+
+          exports.handler = async (event) => {
+            console.log('Received event:', JSON.stringify(event, null, 2));
+
+            try {
+              const body = JSON.parse(event.body);
+              const { name, attending, guests, dietary, message } = body;
+
+              if (!name || typeof attending !== 'boolean') {
+                return {
+                  statusCode: 400,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                  },
+                  body: JSON.stringify({ error: 'Missing required fields: name and attending' }),
+                };
+              }
+
+              const timestamp = new Date().toISOString();
+              const rsvpId = `${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+
+              const item = {
+                rsvpId,
+                name,
+                attending,
+                guests: attending ? (guests || 1) : 0,
+                dietary: dietary || '',
+                message: message || '',
+                createdAt: timestamp,
+                updatedAt: timestamp,
+              };
+
+              const params = {
+                TableName: TABLE_NAME,
+                Item: item,
+              };
+
+              await dynamoDB.put(params).promise();
+
+              return {
+                statusCode: 200,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                },
+                body: JSON.stringify({
+                  message: 'RSVP submitted successfully',
+                  rsvpId,
+                  data: item,
+                }),
+              };
+
+            } catch (error) {
+              console.error('Error processing RSVP:', error);
+              return {
+                statusCode: 500,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                },
+                body: JSON.stringify({ error: 'Internal server error' }),
+              };
+            }
+          };
+
+  # Lambda Function for getting RSVP
+  GetRSVPLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: WeddingGetRSVP
+      Runtime: nodejs18.x
+      Handler: get-rsvp.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          RSVP_TABLE_NAME: !Ref RSVPTable
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamoDB = new AWS.DynamoDB.DocumentClient();
+          const TABLE_NAME = process.env.RSVP_TABLE_NAME;
+
+          exports.handler = async (event) => {
+            console.log('Received event:', JSON.stringify(event, null, 2));
+
+            try {
+              const name = event.queryStringParameters?.name;
+
+              if (!name) {
+                return {
+                  statusCode: 400,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                  },
+                  body: JSON.stringify({ error: 'Missing name parameter' }),
+                };
+              }
+
+              const params = {
+                TableName: TABLE_NAME,
+                IndexName: 'NameIndex',
+                KeyConditionExpression: '#name = :name',
+                ExpressionAttributeNames: {
+                  '#name': 'name',
+                },
+                ExpressionAttributeValues: {
+                  ':name': name,
+                },
+                ScanIndexForward: false,
+                Limit: 1,
+              };
+
+              const result = await dynamoDB.query(params).promise();
+
+              if (result.Items && result.Items.length > 0) {
+                return {
+                  statusCode: 200,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                  },
+                  body: JSON.stringify({ data: result.Items[0] }),
+                };
+              } else {
+                return {
+                  statusCode: 404,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                  },
+                  body: JSON.stringify({ error: 'RSVP not found' }),
+                };
+              }
+
+            } catch (error) {
+              console.error('Error fetching RSVP:', error);
+              return {
+                statusCode: 500,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                },
+                body: JSON.stringify({ error: 'Internal server error' }),
+              };
+            }
+          };
+
+  # API Gateway
+  WeddingAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: WeddingWebsiteAPI
+      Description: API for wedding website RSVP functionality
+
+  # API Resource for RSVP
+  RSVPResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      ParentId: !GetAtt WeddingAPI.RootResourceId
+      PathPart: rsvp
+
+  # API Resource for auth/login
+  AuthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      ParentId: !GetAtt WeddingAPI.RootResourceId
+      PathPart: auth
+
+  LoginResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      ParentId: !Ref AuthResource
+      PathPart: login
+
+  # POST Method for RSVP submission
+  RSVPPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      ResourceId: !Ref RSVPResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RSVPHandlerLambda.Arn}/invocations
+
+  # GET Method for retrieving RSVP
+  RSVPGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      ResourceId: !Ref RSVPResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetRSVPLambda.Arn}/invocations
+
+  # POST Method for auth login
+  AuthLoginPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      ResourceId: !Ref LoginResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthLoginLambda.Arn}/invocations
+
+  RSVPOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      ResourceId: !Ref RSVPResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  LoginOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      ResourceId: !Ref LoginResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Deployment
+  APIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RSVPPostMethod
+      - RSVPGetMethod
+      - RSVPOptionsMethod
+      - AuthLoginPostMethod
+      - LoginOptionsMethod
+    Properties:
+      RestApiId: !Ref WeddingAPI
+
+  # API Gateway Stage
+  APIStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref WeddingAPI
+      DeploymentId: !Ref APIDeployment
+      StageName: prod
+
+  # Lambda Permission for API Gateway
+  RSVPHandlerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RSVPHandlerLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WeddingAPI}/*/*/*
+
+  GetRSVPLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GetRSVPLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WeddingAPI}/*/*/*
+
+  AuthLoginLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthLoginLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WeddingAPI}/*/*/*
+
+  # S3 Bucket for static website hosting
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub wedding-website-${AWS::AccountId}
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  # S3 Bucket Policy
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub ${WebsiteBucket.Arn}/*
+
+Outputs:
+  APIEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${WeddingAPI}.execute-api.${AWS::Region}.amazonaws.com/prod
+
+  WebsiteURL:
+    Description: S3 Website URL
+    Value: !GetAtt WebsiteBucket.WebsiteURL
+
+  TableName:
+    Description: DynamoDB Table Name
+    Value: !Ref RSVPTable
