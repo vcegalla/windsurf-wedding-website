@@ -22,27 +22,29 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body);
-    const { name, attending, guests, dietary, message } = body;
+    const { lastName, people } = body;
 
-    // Validate input
-    if (!name || typeof attending !== 'boolean') {
+    if (!lastName || !Array.isArray(people) || people.length === 0) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'Missing required fields: name and attending' }),
+        body: JSON.stringify({ error: 'Missing required fields: lastName and people' }),
       };
     }
 
     const timestamp = new Date().toISOString();
-    const rsvpId = `${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+    const normalizedLastName = lastName.trim().toLowerCase();
+    const rsvpId = `${normalizedLastName.replace(/\s+/g, '-')}-${Date.now()}`;
 
     const item = {
       rsvpId,
-      name,
-      attending,
-      guests: attending ? (guests || 1) : 0,
-      dietary: dietary || '',
-      message: message || '',
+      lastName: normalizedLastName,
+      people: people.map((person) => ({
+        name: person.name,
+        ceremonyAttending: Boolean(person.ceremonyAttending),
+        receptionAttending: Boolean(person.receptionAttending),
+        dietary: person.dietary || '',
+      })),
       createdAt: timestamp,
       updatedAt: timestamp,
     };

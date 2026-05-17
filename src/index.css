@@ -7,3 +7,61 @@
     @apply bg-gradient-to-br from-pink-50 to-purple-50 min-h-screen;
   }
 }
+
+@layer components {
+  .responsive-container {
+    @apply max-w-6xl mx-auto px-4;
+  }
+
+  .responsive-section {
+    @apply py-8;
+  }
+
+  .responsive-card {
+    @apply rounded-xl shadow-md p-5;
+  }
+
+  .responsive-modal {
+    @apply bg-white rounded-2xl shadow-xl p-5 w-full max-w-lg max-h-[90vh] overflow-y-auto;
+  }
+
+  .responsive-action-group {
+    @apply flex flex-col gap-3 pt-4;
+  }
+
+  .responsive-choice-group {
+    @apply flex flex-col gap-3;
+  }
+
+  @screen sm {
+    .responsive-section {
+      @apply py-10;
+    }
+
+    .responsive-card {
+      @apply p-6;
+    }
+
+    .responsive-modal {
+      @apply p-6;
+    }
+
+    .responsive-choice-group {
+      @apply flex-row gap-4;
+    }
+  }
+
+  @screen md {
+    .responsive-section {
+      @apply py-12;
+    }
+
+    .responsive-modal {
+      @apply p-8;
+    }
+
+    .responsive-action-group {
+      @apply flex-row;
+    }
+  }
+}

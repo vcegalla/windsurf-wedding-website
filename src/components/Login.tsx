@@ -30,12 +30,12 @@ export default function Login({ onLogin }: LoginProps) {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-100 rounded-full mb-4">
-            <Heart className="w-8 h-8 text-primary-600" />
+      <div className="bg-white rounded-2xl shadow-xl p-5 sm:p-8 w-full max-w-md">
+        <div className="text-center mb-6 sm:mb-8">
+          <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-primary-100 rounded-full mb-4">
+            <Heart className="w-7 h-7 sm:w-8 sm:h-8 text-primary-600" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-2">Welcome</h1>
           <p className="text-gray-600">Please enter the password to access the wedding details</p>
         </div>
 

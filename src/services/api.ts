@@ -1,4 +1,4 @@
-import type { AuthResponse, RSVPData } from '../types'
+import type { AuthResponse, HouseholdRSVPData } from '../types'
 
 const API_URL = (import.meta.env.VITE_AWS_API_GATEWAY_URL || '').replace(/\/$/, '')
 
@@ -49,7 +49,47 @@ export const authenticateGuest = async ({ guestName, password }: { guestName: st
   })
 }
 
-export const submitRSVP = async (rsvpData: RSVPData): Promise<{ success: true; data: RSVPData }> => {
+export const lookupHouseholdByLastName = async (lastName: string, isFirstSearch = false): Promise<HouseholdRSVPData | null> => {
+  const trimmedLastName = lastName.trim()
+  if (!trimmedLastName) {
+    return null
+  }
+
+  if (isFirstSearch && trimmedLastName.toLowerCase() === 'example') {
+    return {
+      lastName: trimmedLastName,
+      people: [
+        {
+          name: 'dummy1',
+          ceremonyAttending: true,
+          receptionAttending: true,
+          dietary: '',
+        },
+        {
+          name: 'dummy2',
+          ceremonyAttending: true,
+          receptionAttending: true,
+          dietary: '',
+        },
+      ],
+    }
+  }
+
+  if (!API_URL) {
+    return null
+  }
+
+  try {
+    const result = await apiRequest<{ data: HouseholdRSVPData }>(`/rsvp?lastName=${encodeURIComponent(trimmedLastName)}`, {
+      method: 'GET',
+    })
+    return result.data
+  } catch {
+    return null
+  }
+}
+
+export const submitRSVP = async (rsvpData: HouseholdRSVPData): Promise<{ success: true; data: HouseholdRSVPData }> => {
   if (!API_URL) {
     return new Promise((resolve) => {
       setTimeout(() => {
@@ -58,25 +98,10 @@ export const submitRSVP = async (rsvpData: RSVPData): Promise<{ success: true; d
     })
   }
 
-  const result = await apiRequest<{ data: RSVPData }>('/rsvp', {
+  const result = await apiRequest<{ data: HouseholdRSVPData }>('/rsvp', {
     method: 'POST',
     body: JSON.stringify(rsvpData),
   })
 
   return { success: true, data: result.data }
-}
-
-export const getRSVP = async (name: string): Promise<RSVPData | null> => {
-  if (!API_URL) {
-    return null
-  }
-
-  try {
-    const result = await apiRequest<{ data: RSVPData }>(`/rsvp?name=${encodeURIComponent(name)}`, {
-      method: 'GET',
-    })
-    return result.data
-  } catch {
-    return null
-  }
 }

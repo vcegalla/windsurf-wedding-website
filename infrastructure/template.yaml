@@ -16,12 +16,23 @@ Resources:
       AttributeDefinitions:
         - AttributeName: rsvpId
           AttributeType: S
+        - AttributeName: lastName
+          AttributeType: S
         - AttributeName: name
           AttributeType: S
       KeySchema:
         - AttributeName: rsvpId
           KeyType: HASH
       GlobalSecondaryIndexes:
+        - IndexName: LastNameIndex
+          KeySchema:
+            - AttributeName: lastName
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
         - IndexName: NameIndex
           KeySchema:
             - AttributeName: name
@@ -162,29 +173,32 @@ Resources:
 
             try {
               const body = JSON.parse(event.body);
-              const { name, attending, guests, dietary, message } = body;
+              const { lastName, people } = body;
 
-              if (!name || typeof attending !== 'boolean') {
+              if (!lastName || !Array.isArray(people) || people.length === 0) {
                 return {
                   statusCode: 400,
                   headers: {
                     'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*',
                   },
-                  body: JSON.stringify({ error: 'Missing required fields: name and attending' }),
+                  body: JSON.stringify({ error: 'Missing required fields: lastName and people' }),
                 };
               }
 
               const timestamp = new Date().toISOString();
-              const rsvpId = `${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+              const normalizedLastName = lastName.trim().toLowerCase();
+              const rsvpId = `${normalizedLastName.replace(/\s+/g, '-')}-${Date.now()}`;
 
               const item = {
                 rsvpId,
-                name,
-                attending,
-                guests: attending ? (guests || 1) : 0,
-                dietary: dietary || '',
-                message: message || '',
+                lastName: normalizedLastName,
+                people: people.map((person) => ({
+                  name: person.name,
+                  ceremonyAttending: Boolean(person.ceremonyAttending),
+                  receptionAttending: Boolean(person.receptionAttending),
+                  dietary: person.dietary || '',
+                })),
                 createdAt: timestamp,
                 updatedAt: timestamp,
               };
@@ -243,32 +257,47 @@ Resources:
             console.log('Received event:', JSON.stringify(event, null, 2));
 
             try {
+              const lastName = event.queryStringParameters?.lastName;
               const name = event.queryStringParameters?.name;
 
-              if (!name) {
+              if (!lastName && !name) {
                 return {
                   statusCode: 400,
                   headers: {
                     'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*',
                   },
-                  body: JSON.stringify({ error: 'Missing name parameter' }),
+                  body: JSON.stringify({ error: 'Missing lastName or name parameter' }),
                 };
               }
 
-              const params = {
-                TableName: TABLE_NAME,
-                IndexName: 'NameIndex',
-                KeyConditionExpression: '#name = :name',
-                ExpressionAttributeNames: {
-                  '#name': 'name',
-                },
-                ExpressionAttributeValues: {
-                  ':name': name,
-                },
-                ScanIndexForward: false,
-                Limit: 1,
-              };
+              const params = lastName
+                ? {
+                    TableName: TABLE_NAME,
+                    IndexName: 'LastNameIndex',
+                    KeyConditionExpression: '#lastName = :lastName',
+                    ExpressionAttributeNames: {
+                      '#lastName': 'lastName',
+                    },
+                    ExpressionAttributeValues: {
+                      ':lastName': lastName.trim().toLowerCase(),
+                    },
+                    ScanIndexForward: false,
+                    Limit: 1,
+                  }
+                : {
+                    TableName: TABLE_NAME,
+                    IndexName: 'NameIndex',
+                    KeyConditionExpression: '#name = :name',
+                    ExpressionAttributeNames: {
+                      '#name': 'name',
+                    },
+                    ExpressionAttributeValues: {
+                      ':name': name,
+                    },
+                    ScanIndexForward: false,
+                    Limit: 1,
+                  };
 
               const result = await dynamoDB.query(params).promise();
 

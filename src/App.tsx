@@ -3,7 +3,7 @@ import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isAuthenticated, setIsAuthenticated] = useState(true)
   const [guestName, setGuestName] = useState('')
 
   return (

@@ -21,30 +21,44 @@ exports.handler = async (event) => {
   }
 
   try {
+    const lastName = event.queryStringParameters?.lastName;
     const name = event.queryStringParameters?.name;
 
-    if (!name) {
+    if (!lastName && !name) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'Missing name parameter' }),
+        body: JSON.stringify({ error: 'Missing lastName or name parameter' }),
       };
     }
 
-    // Query DynamoDB for RSVP by name
-    const params = {
-      TableName: TABLE_NAME,
-      IndexName: 'NameIndex',
-      KeyConditionExpression: '#name = :name',
-      ExpressionAttributeNames: {
-        '#name': 'name',
-      },
-      ExpressionAttributeValues: {
-        ':name': name,
-      },
-      ScanIndexForward: false, // Get most recent first
-      Limit: 1,
-    };
+    const params = lastName
+      ? {
+          TableName: TABLE_NAME,
+          IndexName: 'LastNameIndex',
+          KeyConditionExpression: '#lastName = :lastName',
+          ExpressionAttributeNames: {
+            '#lastName': 'lastName',
+          },
+          ExpressionAttributeValues: {
+            ':lastName': lastName.trim().toLowerCase(),
+          },
+          ScanIndexForward: false,
+          Limit: 1,
+        }
+      : {
+          TableName: TABLE_NAME,
+          IndexName: 'NameIndex',
+          KeyConditionExpression: '#name = :name',
+          ExpressionAttributeNames: {
+            '#name': 'name',
+          },
+          ExpressionAttributeValues: {
+            ':name': name,
+          },
+          ScanIndexForward: false,
+          Limit: 1,
+        };
 
     const result = await dynamoDB.query(params).promise();
 

@@ -1,9 +1,15 @@
-export type RSVPData = {
+export type PersonRSVP = {
   name: string
-  attending: boolean
-  guests: number
+  ceremonyAttending: boolean
+  receptionAttending: boolean
   dietary: string
-  message: string
+}
+
+export type HouseholdRSVPData = {
+  lastName: string
+  people: PersonRSVP[]
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type AuthResponse = {
